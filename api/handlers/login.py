@@ -6,6 +6,11 @@ from uuid import uuid4
 
 from .base import BaseHandler
 
+from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
+from cryptography.hazmat.backends import default_backend
+import base64
+from ..conf import pepper  #pepper stored in configuration file
+
 class LoginHandler(BaseHandler):
 
     @coroutine
@@ -49,18 +54,44 @@ class LoginHandler(BaseHandler):
             self.send_error(400, message='The password is invalid!')
             return
 
+        # Retrieve user data, including hashed password, salt, and encrypted displayName
         user = yield self.db.users.find_one({
           'email': email
         }, {
-          'password': 1
+            'password': 1,
+            'salt': 1,
+            'displayName': 1
         })
 
         if user is None:
             self.send_error(403, message='The email address and password are invalid!')
             return
 
-        if user['password'] != password:
-            self.send_error(403, message='The email address and password are invalid!')
+        # Verify password: check if salt exists (hashed password)
+        password_match = False
+        try:
+            stored_hash = base64.b64decode(user['password'])
+            salt = base64.b64decode(user['salt'])
+            
+            kdf = Scrypt(
+                salt = salt,
+                length = 32,
+                n = 2**14,
+                r = 8,
+                p = 1,
+                backend = default_backend()
+            )
+            password_bytes = password.encode('utf-8')
+            peppered_password = password_bytes + pepper # Append the pepper to the password
+            hashed_password = kdf.derive(peppered_password)
+            #hashed_password_b64 = base64.b64encode(hashed_password).decode('utf-8')
+
+            password_match = (hashed_password == stored_hash)
+        except Exception:
+            password_match = False
+        
+        if not password_match:
+            self.send_error(403, message='The email address or password are incorrect!')
             return
 
         token = yield self.generate_token(email)
