@@ -10,6 +10,13 @@ from api.handlers.login import LoginHandler
 
 import urllib.parse
 
+from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
+from cryptography.hazmat.backends import default_backend
+import base64
+import os
+from .conf import pepper  #pepper stored in configuration file
+
+
 class LoginHandlerTest(BaseTest):
 
     @classmethod
@@ -19,9 +26,27 @@ class LoginHandlerTest(BaseTest):
 
     @coroutine
     def register(self):
+        # Generate a random salt
+        salt = os.urandom(16)
+
+        # Hash the password using Scrypt
+        kdf = Scrypt(
+            salt = salt,
+            length = 32,
+            n = 2**14,
+            r = 8,
+            p = 1,
+            backend = default_backend()
+        )
+        password_bytes = self.password.encode('utf-8')
+        peppered_password = password_bytes + pepper # Append the pepper to the password
+        hashed_password = kdf.derive(peppered_password)
+        hashed_password_b64 = base64.b64encode(hashed_password).decode('utf-8')
+
         yield self.get_app().db.users.insert_one({
             'email': self.email,
-            'password': self.password,
+            'password': hashed_password_b64,
+            'salt': base64.b64encode(salt).decode('utf-8'),  
             'displayName': 'testDisplayName'
         })
 
